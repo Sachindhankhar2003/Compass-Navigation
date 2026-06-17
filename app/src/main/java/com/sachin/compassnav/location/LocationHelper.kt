@@ -32,6 +32,16 @@ class LocationHelper(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun startLocationUpdates() {
+        try {
+            fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
+                if (loc != null && _location.value == null) {
+                    _location.value = loc
+                }
+            }
+        } catch (e: Throwable) {
+            e.printStackTrace()
+        }
+
         val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L)
             .setMinUpdateIntervalMillis(1000L)
             .build()

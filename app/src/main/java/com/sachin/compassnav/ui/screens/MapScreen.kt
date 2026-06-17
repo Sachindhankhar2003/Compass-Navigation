@@ -241,6 +241,38 @@ fun MapScreen(
         }
     }
 
+    // Center camera on destination location when it changes
+    LaunchedEffect(destinationLocation) {
+        destinationLocation?.let { dest ->
+            if (mapSource == MapSource.GOOGLE_MAPS) {
+                cameraPositionState.position = CameraPosition.fromLatLngZoom(
+                    LatLng(dest.latitude, dest.longitude),
+                    14f
+                )
+            }
+        }
+    }
+
+    // Center camera when map source is toggled
+    LaunchedEffect(mapSource) {
+        if (mapSource == MapSource.GOOGLE_MAPS) {
+            val dest = destinationLocation
+            if (dest != null) {
+                cameraPositionState.position = CameraPosition.fromLatLngZoom(
+                    LatLng(dest.latitude, dest.longitude),
+                    14f
+                )
+            } else {
+                currentLocation?.let { curr ->
+                    cameraPositionState.position = CameraPosition.fromLatLngZoom(
+                        LatLng(curr.latitude, curr.longitude),
+                        14f
+                    )
+                }
+            }
+        }
+    }
+
     // Run search on pre-filled launcher query
     LaunchedEffect(prefilledAddress) {
         if (prefilledAddress.isNotBlank()) {
@@ -280,8 +312,11 @@ fun MapScreen(
             ) {
                 // Drop a Red Pin Marker at destination
                 destinationLocation?.let { dest ->
+                    val markerState = remember(dest.latitude, dest.longitude) {
+                        MarkerState(position = LatLng(dest.latitude, dest.longitude))
+                    }
                     Marker(
-                        state = MarkerState(position = LatLng(dest.latitude, dest.longitude)),
+                        state = markerState,
                         title = resolvedAddressName,
                         snippet = "Destination"
                     )
@@ -688,6 +723,22 @@ fun LeafletMapView(
                 map.setView(points[0], 14);
               }
             }
+
+            // Notify Android interface when map and Leaflet are ready
+            if (typeof L !== 'undefined' && typeof L.map !== 'undefined') {
+                if (window.Android) {
+                    window.Android.onMapReady();
+                }
+            } else {
+                var checkInterval = setInterval(function() {
+                    if (typeof L !== 'undefined' && typeof L.map !== 'undefined') {
+                        clearInterval(checkInterval);
+                        if (window.Android) {
+                            window.Android.onMapReady();
+                        }
+                    }
+                }, 100);
+            }
           </script>
         </body>
         </html>
@@ -702,12 +753,30 @@ fun LeafletMapView(
             WebView(ctx).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                settings.databaseEnabled = true
+                settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                
+                settings.allowUniversalAccessFromFileURLs = true
+                settings.allowFileAccessFromFileURLs = true
+                settings.allowFileAccess = true
+
+                webChromeClient = android.webkit.WebChromeClient()
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         isPageLoaded = true
                     }
                 }
-                loadDataWithBaseURL("https://localhost", htmlContent, "text/html", "UTF-8", null)
+                
+                addJavascriptInterface(object {
+                    @android.webkit.JavascriptInterface
+                    fun onMapReady() {
+                        post {
+                            isPageLoaded = true
+                        }
+                    }
+                }, "Android")
+
+                loadDataWithBaseURL(null, htmlContent, "text/html", "UTF-8", null)
             }
         },
         update = { webView ->
