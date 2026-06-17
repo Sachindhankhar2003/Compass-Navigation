@@ -79,6 +79,7 @@ import com.sachin.compassnav.ui.theme.PurpleCyanGradient
 import com.sachin.compassnav.ui.theme.PurplePinkGradient
 import com.sachin.compassnav.ui.theme.RadialSpaceGradient
 import com.sachin.compassnav.ui.theme.SoftLavender
+import com.sachin.compassnav.utils.NavigationMath
 import kotlin.math.roundToInt
 
 @Composable
@@ -136,7 +137,7 @@ fun CompassScreen(
 
     var needleAngleAccumulated by remember { mutableStateOf(0f) }
     LaunchedEffect(targetNeedleAngle) {
-        needleAngleAccumulated = getShortestAngleTarget(needleAngleAccumulated, targetNeedleAngle)
+        needleAngleAccumulated = NavigationMath.getShortestAngleTarget(needleAngleAccumulated, targetNeedleAngle)
     }
 
     val animatedNeedleAngle by animateFloatAsState(
@@ -321,14 +322,14 @@ fun CompassScreen(
 
             // Turn-by-Turn Card (Glassmorphic with left purple-pink border strip)
             if (!isGeocodingLoading && !isGeocodingError && hasValidGps) {
-                val diff = normalizeAngle(bearingToDestination - currentHeading)
+                val diff = NavigationMath.normalizeAngle(bearingToDestination - currentHeading)
                 val (arrow, instruction) = when {
                     kotlin.math.abs(diff) < 20f -> Pair("↑", "Go Straight")
                     diff in 20f..160f -> Pair("↗", "Turn Right")
                     diff in -160f..-20f -> Pair("↙", "Turn Left")
                     else -> Pair("↓", "Turn Around")
                 }
-                val targetCardinal = getCardinalDirection(bearingToDestination)
+                val targetCardinal = NavigationMath.getCardinalDirection(bearingToDestination)
                 val distanceStr = formatDistance(distanceInKm)
 
                 Card(
@@ -411,7 +412,7 @@ fun CompassScreen(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "${getCardinalDirection(currentHeading)} ${currentHeading.roundToInt()}°",
+                                text = "${NavigationMath.getCardinalDirection(currentHeading)} ${currentHeading.roundToInt()}°",
                                 fontSize = 22.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = PureWhite,
@@ -647,25 +648,6 @@ fun CompassDialView(
     }
 }
 
-// Helper: formats bearing degree into cardinal letters
-private fun getCardinalDirection(heading: Float): String {
-    val normalized = (heading % 360f + 360f) % 360f
-    val index = (((normalized + 22.5f) / 45f).toInt()) % 8
-    val directions = listOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
-    return directions[index]
-}
-
-// Helper: smooth angle accumulator calculation
-private fun getShortestAngleTarget(current: Float, target: Float): Float {
-    var difference = (target - current) % 360f
-    if (difference < -180f) {
-        difference += 360f
-    } else if (difference > 180f) {
-        difference -= 360f
-    }
-    return current + difference
-}
-
 // Helper: Format distance
 private fun formatDistance(distance: Float): String {
     return if (distance < 1f) {
@@ -673,12 +655,4 @@ private fun formatDistance(distance: Float): String {
     } else {
         String.format(java.util.Locale.US, "%.2f km", distance)
     }
-}
-
-// Helper: Normalize angle to -180..180
-private fun normalizeAngle(angle: Float): Float {
-    var result = angle % 360f
-    if (result < -180f) result += 360f
-    if (result > 180f) result -= 360f
-    return result
 }
