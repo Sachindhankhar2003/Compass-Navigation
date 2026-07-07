@@ -1,8 +1,18 @@
+import java.util.Properties
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
 }
+
+// Load local.properties to avoid hardcoding API keys in source control
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.inputStream().use { localProperties.load(it) }
+}
+val mapsApiKey = localProperties.getProperty("MAPS_API_KEY") ?: ""
 
 android {
     namespace = "com.sachin.compassnav"
@@ -13,6 +23,9 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+
+        manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
+        resValue("string", "google_maps_key", mapsApiKey)
     }
 
     buildTypes {
@@ -28,8 +41,9 @@ android {
     }
     buildFeatures {
       compose = true
+      buildConfig = true
+      resValues = true
       aidl = false
-      buildConfig = false
       shaders = false
     }
 

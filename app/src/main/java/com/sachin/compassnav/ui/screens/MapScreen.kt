@@ -181,9 +181,7 @@ private const val DARK_MAP_STYLE_JSON = """
 ]
 """
 
-// Google Maps API key (same as manifest)
-private const val GOOGLE_MAPS_API_KEY = "AIzaSyAE9eYWQvMQUp9alUIj11Jl9yR0IfPO4As"
-
+// Google Maps API key loaded dynamically from strings resource
 @Composable
 fun MapScreen(
     prefilledAddress: String,
@@ -191,6 +189,7 @@ fun MapScreen(
     onBackClick: () -> Unit
 ) {
     val context = LocalContext.current
+    val googleMapsApiKey = remember(context) { context.getString(com.sachin.compassnav.R.string.google_maps_key) }
     val coroutineScope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
 
@@ -227,7 +226,7 @@ fun MapScreen(
                 RouteRepository.fetchGoogleDirectionsRoute(
                     origin.latitude, origin.longitude,
                     dest.latitude, dest.longitude,
-                    GOOGLE_MAPS_API_KEY
+                    googleMapsApiKey
                 )
             } else {
                 RouteRepository.fetchOsrmRoute(
