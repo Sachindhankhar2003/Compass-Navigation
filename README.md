@@ -40,3 +40,15 @@ The application uses two hardware-level inputs combined mathematically to orient
 * **Needle Rotation**: The visual angle of the compass needle is calculated dynamically as:
   $$\text{Needle Angle} = \text{Bearing to Destination} - \text{Current Phone Heading}$$
 * **Smooth Interpolation**: Utilizes Kotlin math helper filters to animate the needle rotations and prevent 360-degree wrapping/spinning when crossing the North pole boundary.
+
+---
+
+## Recent Upgrades
+
+*   **Road Routing Engine**: Real road routing using OSRM (OpenStreetMap) and Google Directions API to trace road paths on the map instead of straight-line flight paths.
+*   **Cardinal Directions Dial**: Fixed non-rotating letter labels (N, NE, E, SE, S, SW, W, NW) around the compass ring.
+*   **Frosted Live Mini-Map**: Lite-mode live-updating Google Maps component integrated on the Destination Card with a vertical translucent dark glass overlay.
+*   **Local WebView Tiles**: Bundled Leaflet locally in the assets directory (`leaflet.min.js`, `leaflet.min.css`, `map.html`) so the OpenStreetMap tab loads instantly offline without CDN network delays.
+*   **App Logo & Compass Rose**: Designed a clean flat 4-pointed vector compass rose logo and application launcher icon.
+*   **Theme Depth Refresh**: Added a premium deep-space mesh backdrop, micro-animations, slide transitions, and glowing purple-pink shadow overlays.
+
