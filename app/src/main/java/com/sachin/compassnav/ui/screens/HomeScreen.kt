@@ -43,20 +43,24 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sachin.compassnav.ui.theme.BrightOrangeRed
 import com.sachin.compassnav.ui.theme.ElectricPurple
 import com.sachin.compassnav.ui.theme.GlassDark
 import com.sachin.compassnav.ui.theme.HotPink
+import com.sachin.compassnav.ui.theme.MeshBackgroundBrush
 import com.sachin.compassnav.ui.theme.NeonCyan
 import com.sachin.compassnav.ui.theme.PureWhite
-import com.sachin.compassnav.ui.theme.RadialSpaceGradient
 import com.sachin.compassnav.ui.theme.SoftLavender
 
 @Composable
@@ -82,13 +86,13 @@ fun HomeScreen(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(40000, easing = LinearEasing),
+            animation = tween(20000, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "logoRotation"
     )
 
-    // Glowing ring animation alternating colors (Purple -> Pink -> Cyan)
+    // Glowing ring animation alternating colors (Purple → Pink → Cyan)
     val colorIndex by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 3f,
@@ -107,7 +111,7 @@ fun HomeScreen(
 
     // Static random star dots on the background
     val stars = remember {
-        List(25) {
+        List(35) {
             Triple(
                 (0..1000).random() / 1000f, // X percent
                 (0..1000).random() / 1000f, // Y percent
@@ -116,13 +120,24 @@ fun HomeScreen(
         }
     }
 
+    // Subtle mesh grid dots for depth
+    val meshDots = remember {
+        List(50) {
+            Pair(
+                (0..1000).random() / 1000f,
+                (0..1000).random() / 1000f
+            )
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(RadialSpaceGradient)
+            .background(MeshBackgroundBrush)
     ) {
-        // Starry sky background rendering
+        // Rich mesh/texture background: starfield + grid dots
         Canvas(modifier = Modifier.fillMaxSize()) {
+            // Stars
             stars.forEach { star ->
                 drawCircle(
                     color = Color.White.copy(alpha = star.third),
@@ -130,24 +145,33 @@ fun HomeScreen(
                     center = Offset(size.width * star.first, size.height * star.second)
                 )
             }
+            // Subtle mesh dots
+            meshDots.forEach { dot ->
+                drawCircle(
+                    color = ElectricPurple.copy(alpha = 0.08f),
+                    radius = 1.5.dp.toPx(),
+                    center = Offset(size.width * dot.first, size.height * dot.second)
+                )
+            }
         }
 
-        // Faded central color bubble behind logo
+        // Faded central color bubble behind logo — larger and richer
         Box(
             modifier = Modifier
-                .size(380.dp)
+                .size(400.dp)
                 .align(Alignment.Center)
                 .offset(y = (-80).dp)
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            ElectricPurple.copy(alpha = 0.15f),
-                            HotPink.copy(alpha = 0.05f),
+                            ElectricPurple.copy(alpha = 0.22f),
+                            HotPink.copy(alpha = 0.08f),
+                            NeonCyan.copy(alpha = 0.04f),
                             Color.Transparent
                         )
                     )
                 )
-                .blur(40.dp)
+                .blur(50.dp)
         )
 
         // Main Layout Content
@@ -158,35 +182,32 @@ fun HomeScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Animated Color-Cycling Compass Logo Container
+            // Animated Color-Cycling Compass Rose Logo Container
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
                     .size(160.dp * glowScale)
                     .shadow(
-                        elevation = 24.dp,
+                        elevation = 32.dp,
                         shape = CircleShape,
                         clip = false,
                         ambientColor = ElectricPurple,
                         spotColor = HotPink
                     )
                     .clip(CircleShape)
-                    .background(Color(0xFF0F081C).copy(alpha = 0.8f))
+                    .background(Color(0xFF0F081C).copy(alpha = 0.85f))
                     .border(2.5.dp, ringColor, CircleShape)
             ) {
-                Text(
-                    text = "🧭",
-                    fontSize = 76.sp,
-                    modifier = Modifier
-                        .graphicsLayer {
-                            rotationZ = logoRotation
-                        }
+                // Canvas-drawn compass rose (replaces emoji)
+                CompassRoseLogo(
+                    rotation = logoRotation,
+                    size = 100.dp
                 )
             }
 
             Spacer(modifier = Modifier.height(40.dp))
 
-            // App Gradient Heading (Electric Purple to Hot Pink)
+            // App Gradient Heading
             Text(
                 text = "CompassNav",
                 fontSize = 44.sp,
@@ -207,10 +228,16 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(48.dp))
 
-            // Neon Purple border with Glassmorphic Input Card
+            // Glassmorphic Input Card with richer shadow
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .shadow(
+                        elevation = 20.dp,
+                        shape = RoundedCornerShape(20.dp),
+                        ambientColor = ElectricPurple.copy(alpha = 0.3f),
+                        spotColor = HotPink.copy(alpha = 0.2f)
+                    )
                     .border(1.dp, ElectricPurple.copy(alpha = 0.4f), RoundedCornerShape(20.dp)),
                 colors = CardDefaults.cardColors(containerColor = GlassDark),
                 shape = RoundedCornerShape(20.dp)
@@ -284,7 +311,7 @@ fun HomeScreen(
                     .height(56.dp)
                     .clip(RoundedCornerShape(28.dp))
                     .shadow(
-                        elevation = if (isInputValid) 16.dp else 0.dp,
+                        elevation = if (isInputValid) 20.dp else 0.dp,
                         shape = RoundedCornerShape(28.dp),
                         clip = false,
                         ambientColor = ElectricPurple,
@@ -305,6 +332,96 @@ fun HomeScreen(
                 )
             }
         }
+    }
+}
+
+/**
+ * Canvas-drawn compass rose logo.
+ * A clean flat 4-pointed star with N in orange-red, S in white, E/W in lavender.
+ * Diagonal intercardinal arms drawn thinner in purple.
+ * Rotates slowly via [rotation].
+ */
+@Composable
+fun CompassRoseLogo(
+    rotation: Float,
+    size: Dp = 100.dp
+) {
+    Canvas(
+        modifier = Modifier
+            .size(size)
+            .graphicsLayer { rotationZ = rotation }
+    ) {
+        val cx = this.size.width / 2f
+        val cy = this.size.height / 2f
+        val r = this.size.width / 2f
+
+        // N arm (top, long — 80% of radius, orange-red)
+        val nPath = Path().apply {
+            moveTo(cx, cy - r * 0.85f)  // tip
+            lineTo(cx - r * 0.14f, cy)  // base left
+            lineTo(cx, cy - r * 0.1f)   // center indent
+            lineTo(cx + r * 0.14f, cy)  // base right
+            close()
+        }
+        drawPath(nPath, BrightOrangeRed)
+
+        // S arm (bottom, medium — 65% of radius, white)
+        val sPath = Path().apply {
+            moveTo(cx, cy + r * 0.72f)
+            lineTo(cx - r * 0.12f, cy)
+            lineTo(cx, cy + r * 0.1f)
+            lineTo(cx + r * 0.12f, cy)
+            close()
+        }
+        drawPath(sPath, PureWhite)
+
+        // E arm (right, shorter — 55% of radius, lavender)
+        val ePath = Path().apply {
+            moveTo(cx + r * 0.62f, cy)
+            lineTo(cx, cy - r * 0.10f)
+            lineTo(cx + r * 0.10f, cy)
+            lineTo(cx, cy + r * 0.10f)
+            close()
+        }
+        drawPath(ePath, SoftLavender.copy(alpha = 0.85f))
+
+        // W arm (left, shorter — 55% of radius, lavender)
+        val wPath = Path().apply {
+            moveTo(cx - r * 0.62f, cy)
+            lineTo(cx, cy - r * 0.10f)
+            lineTo(cx - r * 0.10f, cy)
+            lineTo(cx, cy + r * 0.10f)
+            close()
+        }
+        drawPath(wPath, SoftLavender.copy(alpha = 0.85f))
+
+        // Diagonal intercardinal arms (NE, NW, SE, SW) — thin purple
+        val diagAngles = listOf(45f, 135f, 225f, 315f)
+        diagAngles.forEach { angle ->
+            rotate(degrees = angle, pivot = Offset(cx, cy)) {
+                val diagPath = Path().apply {
+                    moveTo(cx, cy - r * 0.45f)
+                    lineTo(cx - r * 0.07f, cy)
+                    lineTo(cx, cy - r * 0.08f)
+                    lineTo(cx + r * 0.07f, cy)
+                    close()
+                }
+                drawPath(diagPath, ElectricPurple.copy(alpha = 0.55f))
+            }
+        }
+
+        // Center circle — deep purple
+        drawCircle(
+            color = Color(0xFF1A0033),
+            radius = r * 0.10f,
+            center = Offset(cx, cy)
+        )
+        // Center dot — neon cyan
+        drawCircle(
+            color = NeonCyan,
+            radius = r * 0.045f,
+            center = Offset(cx, cy)
+        )
     }
 }
 

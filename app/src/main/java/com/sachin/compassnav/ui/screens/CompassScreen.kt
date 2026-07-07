@@ -1,6 +1,9 @@
 package com.sachin.compassnav.ui.screens
 
+import android.graphics.Paint as AndroidPaint
+import android.graphics.Typeface
 import android.location.Location
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -8,6 +11,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -56,7 +61,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -65,6 +73,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.GoogleMap
+import com.google.android.gms.maps.MapView
+import com.google.android.gms.maps.GoogleMapOptions
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.MapStyleOptions
 import com.sachin.compassnav.location.LocationHelper
 import com.sachin.compassnav.sensor.CompassSensor
 import com.sachin.compassnav.ui.theme.BrightOrangeRed
@@ -80,7 +95,23 @@ import com.sachin.compassnav.ui.theme.PurplePinkGradient
 import com.sachin.compassnav.ui.theme.RadialSpaceGradient
 import com.sachin.compassnav.ui.theme.SoftLavender
 import com.sachin.compassnav.utils.NavigationMath
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
+
+// Dark map style JSON for mini-map (same as MapScreen)
+private const val MINI_MAP_STYLE_JSON = """
+[
+  {"elementType":"geometry","stylers":[{"color":"#0D0D1A"}]},
+  {"elementType":"labels.text.fill","stylers":[{"color":"#6e6e9e"}]},
+  {"elementType":"labels.text.stroke","stylers":[{"color":"#0D0D1A"}]},
+  {"featureType":"road","elementType":"geometry","stylers":[{"color":"#1a1a3a"}]},
+  {"featureType":"road.arterial","elementType":"geometry","stylers":[{"color":"#1e1e4a"}]},
+  {"featureType":"water","elementType":"geometry","stylers":[{"color":"#060914"}]},
+  {"featureType":"poi","stylers":[{"visibility":"off"}]},
+  {"featureType":"transit","stylers":[{"visibility":"off"}]}
+]
+"""
 
 @Composable
 fun CompassScreen(
@@ -142,7 +173,7 @@ fun CompassScreen(
 
     val animatedNeedleAngle by animateFloatAsState(
         targetValue = needleAngleAccumulated,
-        animationSpec = tween(durationMillis = 250, easing = LinearEasing),
+        animationSpec = tween(durationMillis = 300, easing = LinearEasing),
         label = "needleRotation"
     )
 
@@ -156,6 +187,17 @@ fun CompassScreen(
             repeatMode = RepeatMode.Restart
         ),
         label = "ambientRotation"
+    )
+
+    // Pulsing glow on compass ring
+    val glowPulse by infiniteTransition.animateFloat(
+        initialValue = 0.5f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glowPulse"
     )
 
     // Colorful confetti generator on arrival screen
@@ -182,8 +224,8 @@ fun CompassScreen(
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            ElectricPurple.copy(alpha = 0.15f),
-                            NeonCyan.copy(alpha = 0.05f),
+                            ElectricPurple.copy(alpha = 0.18f * glowPulse),
+                            NeonCyan.copy(alpha = 0.07f * glowPulse),
                             Color.Transparent
                         )
                     )
@@ -223,37 +265,14 @@ fun CompassScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Top Destination Info Panel
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, CardBorder, RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = GlassDark),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp)
-                ) {
-                    Text(
-                        text = "DESTINATION",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = HotPink,
-                        letterSpacing = 1.sp
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = destinationAddress,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = PureWhite,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
+            // --- TOP DESTINATION CARD with live mini-map background ---
+            DestinationMiniMapCard(
+                destinationAddress = destinationAddress,
+                currentLocation = currentLocation,
+                destinationLocation = destinationLocation
+            )
 
-            // Middle section containing the dynamic Compass Dial or status screens
+            // Middle section: Compass Dial or status screens
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -298,7 +317,6 @@ fun CompassScreen(
                         }
                     }
                     else -> {
-                        // Drawing the Compass Dial and Rotating Pointer
                         CompassDialView(
                             heading = currentHeading,
                             needleAngle = animatedNeedleAngle,
@@ -320,77 +338,86 @@ fun CompassScreen(
                 }
             }
 
-            // Turn-by-Turn Card (Glassmorphic with left purple-pink border strip)
-            if (!isGeocodingLoading && !isGeocodingError && hasValidGps) {
-                val diff = NavigationMath.normalizeAngle(bearingToDestination - currentHeading)
-                val (arrow, instruction) = when {
-                    kotlin.math.abs(diff) < 20f -> Pair("↑", "Go Straight")
-                    diff in 20f..160f -> Pair("↗", "Turn Right")
-                    diff in -160f..-20f -> Pair("↙", "Turn Left")
-                    else -> Pair("↓", "Turn Around")
-                }
-                val targetCardinal = NavigationMath.getCardinalDirection(bearingToDestination)
-                val distanceStr = formatDistance(distanceInKm)
+            // Turn-by-Turn Card with animated entrance
+            AnimatedVisibility(
+                visible = !isGeocodingLoading && !isGeocodingError && hasValidGps,
+                enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 })
+            ) {
+                if (!isGeocodingLoading && !isGeocodingError && hasValidGps) {
+                    val diff = NavigationMath.normalizeAngle(bearingToDestination - currentHeading)
+                    val (arrow, instruction) = when {
+                        kotlin.math.abs(diff) < 20f -> Pair("↑", "Go Straight")
+                        diff in 20f..160f -> Pair("↗", "Turn Right")
+                        diff in -160f..-20f -> Pair("↙", "Turn Left")
+                        else -> Pair("↓", "Turn Around")
+                    }
+                    val targetCardinal = NavigationMath.getCardinalDirection(bearingToDestination)
+                    val distanceStr = formatDistance(distanceInKm)
 
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 12.dp)
-                        .border(1.dp, CardBorder, RoundedCornerShape(16.dp)),
-                    colors = CardDefaults.cardColors(containerColor = GlassDark),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Row(
+                    Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(IntrinsicSize.Min),
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(bottom = 12.dp)
+                            .border(1.dp, CardBorder, RoundedCornerShape(16.dp)),
+                        colors = CardDefaults.cardColors(containerColor = GlassDark),
+                        shape = RoundedCornerShape(16.dp)
                     ) {
-                        // Left vertical gradient bar
-                        Box(
-                            modifier = Modifier
-                                .width(6.dp)
-                                .fillMaxHeight()
-                                .background(PurplePinkGradient)
-                        )
-
                         Row(
                             modifier = Modifier
-                                .weight(1f)
-                                .padding(16.dp),
+                                .fillMaxWidth()
+                                .height(IntrinsicSize.Min),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = arrow,
-                                fontSize = 36.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = NeonCyan
+                            Box(
+                                modifier = Modifier
+                                    .width(6.dp)
+                                    .fillMaxHeight()
+                                    .background(PurplePinkGradient)
                             )
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Column {
+                            Row(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Text(
-                                    text = instruction,
-                                    fontSize = 18.sp,
+                                    text = arrow,
+                                    fontSize = 36.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = PureWhite
+                                    color = NeonCyan
                                 )
-                                Text(
-                                    text = "$targetCardinal · $distanceStr",
-                                    fontSize = 14.sp,
-                                    color = SoftLavender
-                                )
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Column {
+                                    Text(
+                                        text = instruction,
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = PureWhite
+                                    )
+                                    Text(
+                                        text = "$targetCardinal · $distanceStr",
+                                        fontSize = 14.sp,
+                                        color = SoftLavender
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // Bottom Navigation Metrics Panel with gradient distance
+            // Bottom Navigation Metrics Panel
             if (!isGeocodingLoading && !isGeocodingError) {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .border(1.dp, CardBorder, RoundedCornerShape(20.dp)),
+                        .border(1.dp, CardBorder, RoundedCornerShape(20.dp))
+                        .shadow(
+                            elevation = 16.dp,
+                            shape = RoundedCornerShape(20.dp),
+                            ambientColor = ElectricPurple.copy(alpha = 0.3f),
+                            spotColor = NeonCyan.copy(alpha = 0.2f)
+                        ),
                     colors = CardDefaults.cardColors(containerColor = GlassDark),
                     shape = RoundedCornerShape(20.dp)
                 ) {
@@ -401,7 +428,6 @@ fun CompassScreen(
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Heading Column
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
                                 text = "HEADING",
@@ -420,7 +446,6 @@ fun CompassScreen(
                             )
                         }
 
-                        // Vertical separator
                         Box(
                             modifier = Modifier
                                 .height(40.dp)
@@ -428,7 +453,6 @@ fun CompassScreen(
                                 .background(PureWhite.copy(alpha = 0.15f))
                         )
 
-                        // Distance Column
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
                                 text = "DISTANCE",
@@ -451,7 +475,7 @@ fun CompassScreen(
             }
         }
 
-        // Arrival Congrats Overlay Card with falling colorful confetti
+        // Arrival Congrats Overlay Card
         val isArrived = hasValidGps && (distanceInKm * 1000f < 50f)
         if (isArrived) {
             Box(
@@ -459,7 +483,6 @@ fun CompassScreen(
                     .fillMaxSize()
                     .background(DeepBlack.copy(alpha = 0.95f))
             ) {
-                // Draw falling confetti
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     confetti.forEach { conf ->
                         drawRect(
@@ -470,7 +493,6 @@ fun CompassScreen(
                     }
                 }
 
-                // Congratulatory overlay Card in Center
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -532,6 +554,155 @@ fun CompassScreen(
     }
 }
 
+/**
+ * Destination card with live mini-map in lite mode as the background,
+ * a frosted semi-transparent overlay, and the destination text on top.
+ */
+@Composable
+fun DestinationMiniMapCard(
+    destinationAddress: String,
+    currentLocation: Location?,
+    destinationLocation: Location?
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, CardBorder, RoundedCornerShape(16.dp)),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(100.dp)
+        ) {
+            // Mini-map background (Google Maps lite mode)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(16.dp))
+            ) {
+                LiveMiniMapView(
+                    currentLocation = currentLocation,
+                    destinationLocation = destinationLocation,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            // Frosted glass overlay gradient
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFF0A0814).copy(alpha = 0.7f),
+                                Color(0xFF1A0833).copy(alpha = 0.5f),
+                                Color(0xFF0A0814).copy(alpha = 0.8f)
+                            )
+                        )
+                    )
+            )
+
+            // Content on top of the overlay
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = "DESTINATION",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = HotPink,
+                    letterSpacing = 1.5.sp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = destinationAddress,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = PureWhite,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (currentLocation != null) {
+                    Text(
+                        text = "📍 Live tracking active",
+                        fontSize = 11.sp,
+                        color = NeonCyan.copy(alpha = 0.8f),
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Google Maps lite mode view showing live user location (and optionally destination).
+ * Updates camera automatically when currentLocation changes.
+ */
+@Composable
+fun LiveMiniMapView(
+    currentLocation: Location?,
+    destinationLocation: Location?,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var googleMapRef by remember { mutableStateOf<GoogleMap?>(null) }
+
+    AndroidView(
+        modifier = modifier,
+        factory = {
+            MapView(context, GoogleMapOptions().liteMode(true)).apply {
+                onCreate(null)
+                onResume()
+                getMapAsync { gMap ->
+                    googleMapRef = gMap
+                    gMap.uiSettings.isScrollGesturesEnabled = false
+                    gMap.uiSettings.isZoomGesturesEnabled = false
+                    gMap.uiSettings.isRotateGesturesEnabled = false
+                    gMap.uiSettings.isTiltGesturesEnabled = false
+                    gMap.uiSettings.isMyLocationButtonEnabled = false
+                    gMap.uiSettings.isMapToolbarEnabled = false
+                    try {
+                        gMap.setMapStyle(MapStyleOptions(MINI_MAP_STYLE_JSON))
+                    } catch (e: Exception) { /* ignore style errors */ }
+
+                    // Initial camera position
+                    val loc = currentLocation ?: destinationLocation
+                    loc?.let {
+                        gMap.moveCamera(
+                            com.google.android.gms.maps.CameraUpdateFactory.newLatLngZoom(
+                                LatLng(it.latitude, it.longitude), 13f
+                            )
+                        )
+                    }
+                }
+            }
+        },
+        update = { mapView ->
+            // Update camera to follow user's live location
+            val loc = currentLocation ?: destinationLocation
+            loc?.let { location ->
+                googleMapRef?.animateCamera(
+                    CameraUpdateFactory.newLatLngZoom(
+                        LatLng(location.latitude, location.longitude), 13f
+                    )
+                )
+            }
+        }
+    )
+
+    DisposableEffect(Unit) {
+        onDispose {
+            // MapView lifecycle handled implicitly by AndroidView
+        }
+    }
+}
+
 @Composable
 fun CompassDialView(
     heading: Float,
@@ -543,7 +714,7 @@ fun CompassDialView(
         val center = Offset(size.width / 2f, size.height / 2f)
         val radius = size.width / 2f
 
-        // Draw ambient rotating dial ring with sweep gradient stroke (Purple -> Cyan -> Pink)
+        // Draw ambient rotating dial ring with sweep gradient stroke
         rotate(degrees = ambientRotation, pivot = center) {
             drawCircle(
                 brush = Brush.sweepGradient(
@@ -554,7 +725,7 @@ fun CompassDialView(
             )
         }
 
-        // Draw cardinal ticks rotated based on phone heading
+        // Draw cardinal ticks — rotate with heading (so they move as the phone moves)
         rotate(degrees = -heading, pivot = center) {
             for (angle in 0 until 360 step 30) {
                 val tickLength = if (angle % 90 == 0) 12.dp.toPx() else 6.dp.toPx()
@@ -564,38 +735,81 @@ fun CompassDialView(
                 rotate(degrees = angle.toFloat(), pivot = center) {
                     drawLine(
                         color = tickColor,
-                        start = Offset(center.x, 20.dp.toPx()),
-                        end = Offset(center.x, 20.dp.toPx() + tickLength),
+                        start = Offset(center.x, 18.dp.toPx()),
+                        end = Offset(center.x, 18.dp.toPx() + tickLength),
                         strokeWidth = strokeWidth
                     )
                 }
             }
         }
 
-        // static forward cursor alignment line (Neon Cyan)
+        // Static alignment cursor (Neon Cyan) at top — does NOT rotate
         drawLine(
             color = NeonCyan,
             start = Offset(center.x, 2.dp.toPx()),
-            end = Offset(center.x, 15.dp.toPx()),
+            end = Offset(center.x, 14.dp.toPx()),
             strokeWidth = 3.5.dp.toPx()
         )
 
-        // Draw Target Destination Needle rotated based on bearingToDestination - heading
+        // --- FEATURE #1: Fixed cardinal direction labels (do NOT rotate) ---
+        val labelRadius = radius - 30.dp.toPx()
+        val cardinalAngles = mapOf(
+            "N" to 0.0,
+            "NE" to 45.0,
+            "E" to 90.0,
+            "SE" to 135.0,
+            "S" to 180.0,
+            "SW" to 225.0,
+            "W" to 270.0,
+            "NW" to 315.0
+        )
+
+        drawIntoCanvas { canvas ->
+            cardinalAngles.forEach { (label, angleDeg) ->
+                val angleRad = Math.toRadians(angleDeg - 90.0)
+                val x = center.x + (labelRadius * cos(angleRad)).toFloat()
+                val y = center.y + (labelRadius * sin(angleRad)).toFloat()
+
+                val isCardinal = label.length == 1
+                val isNorth = label == "N"
+
+                val textPaint = AndroidPaint().apply {
+                    isAntiAlias = true
+                    textAlign = AndroidPaint.Align.CENTER
+                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    textSize = if (isCardinal) 14.dp.toPx() else 10.dp.toPx()
+                    color = when {
+                        isNorth -> BrightOrangeRed.copy(alpha = 1.0f).toArgb()
+                        isCardinal -> PureWhite.copy(alpha = 0.95f).toArgb()
+                        else -> SoftLavender.copy(alpha = 0.75f).toArgb()
+                    }
+                    setShadowLayer(4.dp.toPx(), 0f, 0f, when {
+                        isNorth -> BrightOrangeRed.copy(alpha = 0.6f).toArgb()
+                        isCardinal -> ElectricPurple.copy(alpha = 0.5f).toArgb()
+                        else -> 0x00000000
+                    })
+                }
+
+                // Vertically center the text
+                val textHeight = textPaint.descent() - textPaint.ascent()
+                val textOffset = textHeight / 2 - textPaint.descent()
+
+                canvas.nativeCanvas.drawText(label, x, y + textOffset, textPaint)
+            }
+        }
+
+        // Draw rotating needle
         rotate(degrees = needleAngle, pivot = center) {
             val needleWidth = 14.dp.toPx()
             val needleLength = radius - 35.dp.toPx()
 
-            // Draw Neon Orange-Red (North/Target-pointing) part of the needle
             val orangeNeedlePath = Path().apply {
                 moveTo(center.x, center.y - needleLength)
                 lineTo(center.x - needleWidth, center.y)
                 lineTo(center.x, center.y - 4.dp.toPx())
                 close()
             }
-            drawPath(
-                path = orangeNeedlePath,
-                color = BrightOrangeRed
-            )
+            drawPath(path = orangeNeedlePath, color = BrightOrangeRed)
 
             val shadowOrangeNeedlePath = Path().apply {
                 moveTo(center.x, center.y - needleLength)
@@ -603,22 +817,15 @@ fun CompassDialView(
                 lineTo(center.x, center.y - 4.dp.toPx())
                 close()
             }
-            drawPath(
-                path = shadowOrangeNeedlePath,
-                color = BrightOrangeRed.copy(alpha = 0.8f)
-            )
+            drawPath(path = shadowOrangeNeedlePath, color = BrightOrangeRed.copy(alpha = 0.8f))
 
-            // Draw White bottom pointer
             val whiteNeedlePath = Path().apply {
                 moveTo(center.x, center.y + needleLength * 0.6f)
                 lineTo(center.x - needleWidth * 0.8f, center.y)
                 lineTo(center.x, center.y - 4.dp.toPx())
                 close()
             }
-            drawPath(
-                path = whiteNeedlePath,
-                color = PureWhite
-            )
+            drawPath(path = whiteNeedlePath, color = PureWhite)
 
             val shadowWhiteNeedlePath = Path().apply {
                 moveTo(center.x, center.y + needleLength * 0.6f)
@@ -626,25 +833,16 @@ fun CompassDialView(
                 lineTo(center.x, center.y - 4.dp.toPx())
                 close()
             }
-            drawPath(
-                path = shadowWhiteNeedlePath,
-                color = PureWhite.copy(alpha = 0.8f)
-            )
+            drawPath(path = shadowWhiteNeedlePath, color = PureWhite.copy(alpha = 0.8f))
         }
 
-        // Draw Center Pivot Cap
-        drawCircle(
-            color = DeepBlack,
-            radius = 10.dp.toPx()
-        )
+        // Center Pivot Cap
+        drawCircle(color = DeepBlack, radius = 10.dp.toPx())
         drawCircle(
             brush = Brush.radialGradient(listOf(NeonCyan, Color.Transparent)),
             radius = 6.dp.toPx()
         )
-        drawCircle(
-            color = PureWhite,
-            radius = 2.dp.toPx()
-        )
+        drawCircle(color = PureWhite, radius = 2.dp.toPx())
     }
 }
 

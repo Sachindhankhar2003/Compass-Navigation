@@ -1,6 +1,14 @@
 package com.sachin.compassnav.ui.screens
 
+import android.annotation.SuppressLint
 import android.location.Location
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -54,6 +62,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.MapStyleOptions
@@ -64,6 +73,8 @@ import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
+import com.sachin.compassnav.data.RouteRepository
+import com.sachin.compassnav.data.RouteResult
 import com.sachin.compassnav.location.LocationHelper
 import com.sachin.compassnav.ui.theme.CardBorder
 import com.sachin.compassnav.ui.theme.DeepBlack
@@ -75,13 +86,9 @@ import com.sachin.compassnav.ui.theme.PureWhite
 import com.sachin.compassnav.ui.theme.RadialSpaceGradient
 import com.sachin.compassnav.ui.theme.SoftLavender
 import kotlinx.coroutines.launch
-import android.annotation.SuppressLint
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import androidx.compose.ui.viewinterop.AndroidView
 import kotlin.math.roundToInt
 
-// Retro dark night style for the map
+// Retro dark night style for the Google Map
 private const val DARK_MAP_STYLE_JSON = """
 [
   {
@@ -174,6 +181,9 @@ private const val DARK_MAP_STYLE_JSON = """
 ]
 """
 
+// Google Maps API key (same as manifest)
+private const val GOOGLE_MAPS_API_KEY = "AIzaSyAE9eYWQvMQUp9alUIj11Jl9yR0IfPO4As"
+
 @Composable
 fun MapScreen(
     prefilledAddress: String,
@@ -202,8 +212,48 @@ fun MapScreen(
     var destinationLocation by remember { mutableStateOf<Location?>(null) }
     var isSearching by remember { mutableStateOf(false) }
 
+    // Route state - real road route from API
+    var routeResult by remember { mutableStateOf<RouteResult?>(null) }
+    var isFetchingRoute by remember { mutableStateOf(false) }
+
     val cameraPositionState = rememberCameraPositionState()
     var hasCenteredOnUser by remember { mutableStateOf(false) }
+
+    // Fetch route whenever origin/destination/mapsource changes
+    fun triggerRouteFetch(origin: Location, dest: Location) {
+        coroutineScope.launch {
+            isFetchingRoute = true
+            routeResult = if (mapSource == MapSource.GOOGLE_MAPS) {
+                RouteRepository.fetchGoogleDirectionsRoute(
+                    origin.latitude, origin.longitude,
+                    dest.latitude, dest.longitude,
+                    GOOGLE_MAPS_API_KEY
+                )
+            } else {
+                RouteRepository.fetchOsrmRoute(
+                    origin.latitude, origin.longitude,
+                    dest.latitude, dest.longitude
+                )
+            }
+            isFetchingRoute = false
+        }
+    }
+
+    // Re-fetch route when map source changes
+    LaunchedEffect(mapSource) {
+        val origin = currentLocation
+        val dest = destinationLocation
+        if (origin != null && dest != null) {
+            triggerRouteFetch(origin, dest)
+        }
+    }
+
+    // Re-fetch route when location updates and we have a destination
+    LaunchedEffect(currentLocation, destinationLocation) {
+        val origin = currentLocation ?: return@LaunchedEffect
+        val dest = destinationLocation ?: return@LaunchedEffect
+        triggerRouteFetch(origin, dest)
+    }
 
     // Geocoding function logic
     fun triggerGeocodeSearch(address: String) {
@@ -226,7 +276,7 @@ fun MapScreen(
         }
     }
 
-    // Center camera on user's first GPS location match
+    // Center camera on user's first GPS location
     LaunchedEffect(currentLocation) {
         currentLocation?.let { curr ->
             if (!hasCenteredOnUser) {
@@ -280,7 +330,7 @@ fun MapScreen(
         }
     }
 
-    // Dark Map and parameters
+    // Dark Map properties
     val mapProperties = remember {
         MapProperties(
             isMyLocationEnabled = true,
@@ -310,7 +360,6 @@ fun MapScreen(
                 properties = mapProperties,
                 uiSettings = mapUiSettings
             ) {
-                // Drop a Red Pin Marker at destination
                 destinationLocation?.let { dest ->
                     val markerState = remember(dest.latitude, dest.longitude) {
                         MarkerState(position = LatLng(dest.latitude, dest.longitude))
@@ -321,16 +370,25 @@ fun MapScreen(
                         snippet = "Destination"
                     )
 
-                    // Draw Neon Cyan Polyline connecting current location and destination
-                    currentLocation?.let { curr ->
+                    // Draw real road polyline if available, else straight line fallback
+                    val polyPoints = routeResult?.points
+                    if (!polyPoints.isNullOrEmpty()) {
                         Polyline(
-                            points = listOf(
-                                LatLng(curr.latitude, curr.longitude),
-                                LatLng(dest.latitude, dest.longitude)
-                            ),
+                            points = polyPoints,
                             color = NeonCyan,
                             width = 12f
                         )
+                    } else {
+                        currentLocation?.let { curr ->
+                            Polyline(
+                                points = listOf(
+                                    LatLng(curr.latitude, curr.longitude),
+                                    LatLng(dest.latitude, dest.longitude)
+                                ),
+                                color = NeonCyan.copy(alpha = 0.5f),
+                                width = 8f
+                            )
+                        }
                     }
                 }
             }
@@ -339,6 +397,7 @@ fun MapScreen(
                 userLocation = currentLocation,
                 destinationLocation = destinationLocation,
                 destinationName = resolvedAddressName,
+                routePoints = routeResult?.points,
                 modifier = Modifier.fillMaxSize()
             )
         }
@@ -353,7 +412,6 @@ fun MapScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Back Button
                 IconButton(
                     onClick = onBackClick,
                     modifier = Modifier
@@ -371,7 +429,6 @@ fun MapScreen(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Search Address OutlinedTextField with neon cyan glow outline
                 OutlinedTextField(
                     value = searchAddress,
                     onValueChange = { searchAddress = it },
@@ -437,8 +494,8 @@ fun MapScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 listOf(
-                    MapSource.OPEN_STREET_MAP to "OpenStreetMap (Free)",
-                    MapSource.GOOGLE_MAPS to "Google Maps (API Key)"
+                    MapSource.OPEN_STREET_MAP to "OpenStreetMap",
+                    MapSource.GOOGLE_MAPS to "Google Maps"
                 ).forEach { (source, label) ->
                     val isSelected = mapSource == source
                     val backgroundBrush = if (isSelected) {
@@ -469,114 +526,146 @@ fun MapScreen(
                     }
                 }
             }
-
         }
 
-        // 3. Bottom Stats Panel & Navigation Button (with Purple -> Pink border gradient)
-        destinationLocation?.let { dest ->
-            var distanceInKm = 0f
-            currentLocation?.let { curr ->
-                val distanceInMeters = curr.distanceTo(dest)
-                distanceInKm = distanceInMeters / 1000f
-            }
+        // 3. Bottom Stats Panel & Navigation Button
+        AnimatedVisibility(
+            visible = destinationLocation != null,
+            enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+            exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter)
+        ) {
+            destinationLocation?.let { dest ->
+                // Use real route data if available, else fall back to straight-line
+                val distanceKm: Double
+                val estTimeMinutes: Int
 
-            val estTimeMinutes = calculateEstTimeMinutes(distanceInKm)
+                val route = routeResult
+                if (route != null) {
+                    distanceKm = route.distanceKm
+                    estTimeMinutes = route.durationMinutes
+                } else {
+                    val distMeters = currentLocation?.distanceTo(dest) ?: 0f
+                    distanceKm = (distMeters / 1000.0)
+                    estTimeMinutes = calculateEstTimeMinutes(distanceKm.toFloat())
+                }
 
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
-                    .align(Alignment.BottomCenter)
-                    .border(
-                        1.5.dp,
-                        Brush.horizontalGradient(listOf(ElectricPurple, HotPink)),
-                        RoundedCornerShape(20.dp)
-                    ),
-                colors = CardDefaults.cardColors(containerColor = DeepBlack.copy(alpha = 0.92f)),
-                shape = RoundedCornerShape(20.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = resolvedAddressName,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = PureWhite,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.align(Alignment.Start)
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column {
-                            Text(
-                                text = "DISTANCE",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = NeonCyan,
-                                letterSpacing = 1.sp
-                            )
-                            Text(
-                                text = if (currentLocation == null) "Calculating..." else "${String.format(java.util.Locale.US, "%.2f", distanceInKm)} km",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = PureWhite,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
-
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text(
-                                text = "EST. DRIVE TIME",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = HotPink,
-                                letterSpacing = 1.sp
-                            )
-                            Text(
-                                text = if (currentLocation == null) "Calculating..." else formatDuration(estTimeMinutes),
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = PureWhite,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    Button(
-                        onClick = { onStartCompassNavigation(resolvedAddressName) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(50.dp)
-                            .clip(RoundedCornerShape(25.dp))
-                            .shadow(
-                                elevation = 12.dp,
-                                shape = RoundedCornerShape(25.dp),
-                                clip = false,
-                                ambientColor = ElectricPurple,
-                                spotColor = HotPink
-                            )
-                            .background(Brush.horizontalGradient(listOf(ElectricPurple, HotPink))),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.Transparent,
-                            disabledContainerColor = Color.Transparent
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .shadow(
+                            elevation = 20.dp,
+                            shape = RoundedCornerShape(20.dp),
+                            ambientColor = ElectricPurple.copy(alpha = 0.4f),
+                            spotColor = HotPink.copy(alpha = 0.4f)
                         )
+                        .border(
+                            1.5.dp,
+                            Brush.horizontalGradient(listOf(ElectricPurple, HotPink)),
+                            RoundedCornerShape(20.dp)
+                        ),
+                    colors = CardDefaults.cardColors(containerColor = DeepBlack.copy(alpha = 0.92f)),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "Start Compass Navigation",
-                            fontSize = 16.sp,
+                            text = resolvedAddressName,
+                            fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
-                            color = PureWhite
+                            color = PureWhite,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.align(Alignment.Start)
                         )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text(
+                                    text = if (routeResult != null) "ROAD DISTANCE" else "DISTANCE",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = NeonCyan,
+                                    letterSpacing = 1.sp
+                                )
+                                Text(
+                                    text = if (currentLocation == null) "Calculating..."
+                                    else "${String.format(java.util.Locale.US, "%.2f", distanceKm)} km",
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = PureWhite,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+
+                            // Route fetch indicator
+                            if (isFetchingRoute) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .align(Alignment.CenterVertically),
+                                    color = ElectricPurple,
+                                    strokeWidth = 2.dp
+                                )
+                            }
+
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = if (routeResult != null) "DRIVE TIME" else "EST. DRIVE TIME",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = HotPink,
+                                    letterSpacing = 1.sp
+                                )
+                                Text(
+                                    text = if (currentLocation == null) "Calculating..."
+                                    else formatDuration(estTimeMinutes),
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = PureWhite,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        Button(
+                            onClick = { onStartCompassNavigation(resolvedAddressName) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                                .clip(RoundedCornerShape(25.dp))
+                                .shadow(
+                                    elevation = 12.dp,
+                                    shape = RoundedCornerShape(25.dp),
+                                    clip = false,
+                                    ambientColor = ElectricPurple,
+                                    spotColor = HotPink
+                                )
+                                .background(Brush.horizontalGradient(listOf(ElectricPurple, HotPink))),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.Transparent,
+                                disabledContainerColor = Color.Transparent
+                            )
+                        ) {
+                            Text(
+                                text = "Start Compass Navigation",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = PureWhite
+                            )
+                        }
                     }
                 }
             }
@@ -584,7 +673,7 @@ fun MapScreen(
     }
 }
 
-// Average driving speed of 40 km/h
+// Fallback: average driving speed of 40 km/h
 private fun calculateEstTimeMinutes(distanceInKm: Float): Int {
     if (distanceInKm <= 0) return 0
     val timeHours = distanceInKm / 40f
@@ -608,16 +697,22 @@ enum class MapSource {
     OPEN_STREET_MAP
 }
 
+/**
+ * Leaflet-based OSM map in a WebView.
+ *
+ * FIX: Uses "https://unpkg.com/" as base URL so Leaflet CDN resources load correctly.
+ * OSRM route points are injected via JavascriptInterface as a JSON array.
+ */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun LeafletMapView(
     userLocation: Location?,
     destinationLocation: Location?,
     destinationName: String,
+    routePoints: List<LatLng>?,
     modifier: Modifier = Modifier
 ) {
-    val htmlContent = remember {
-        """
+    val htmlContent = """
         <!DOCTYPE html>
         <html>
         <head>
@@ -649,7 +744,8 @@ fun LeafletMapView(
             }).setView([20, 0], 2);
 
             L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-              maxZoom: 20
+              maxZoom: 20,
+              crossOrigin: true
             }).addTo(map);
 
             var userMarker = null;
@@ -672,7 +768,7 @@ fun LeafletMapView(
 
             function updateLocations(userLat, userLng, destLat, destLng, destTitle) {
               var points = [];
-              
+
               if (userLat !== null && userLng !== null) {
                 var userPos = [userLat, userLng];
                 points.push(userPos);
@@ -705,47 +801,62 @@ fun LeafletMapView(
                 destMarker = null;
               }
 
-              if (routeLine) {
-                map.removeLayer(routeLine);
-                routeLine = null;
-              }
-
-              if (points.length === 2) {
+              if (points.length === 2 && !routeLine) {
                 routeLine = L.polyline(points, {
                   color: '#00F0FF',
                   weight: 4,
-                  opacity: 0.8
+                  opacity: 0.6,
+                  dashArray: '8, 8'
                 }).addTo(map);
-                
                 var bounds = L.latLngBounds(points);
-                map.fitBounds(bounds, { padding: [50, 50] });
+                map.fitBounds(bounds, { padding: [60, 60] });
               } else if (points.length === 1) {
                 map.setView(points[0], 14);
               }
             }
 
-            // Notify Android interface when map and Leaflet are ready
-            if (typeof L !== 'undefined' && typeof L.map !== 'undefined') {
-                if (window.Android) {
-                    window.Android.onMapReady();
-                }
-            } else {
-                var checkInterval = setInterval(function() {
-                    if (typeof L !== 'undefined' && typeof L.map !== 'undefined') {
-                        clearInterval(checkInterval);
-                        if (window.Android) {
-                            window.Android.onMapReady();
-                        }
-                    }
-                }, 100);
+            function drawRoute(pointsJson) {
+              if (routeLine) {
+                map.removeLayer(routeLine);
+                routeLine = null;
+              }
+              var points = JSON.parse(pointsJson);
+              if (!points || points.length < 2) return;
+
+              routeLine = L.polyline(points, {
+                color: '#06B6D4',
+                weight: 5,
+                opacity: 0.9
+              }).addTo(map);
+
+              var bounds = L.latLngBounds(points);
+              map.fitBounds(bounds, { padding: [60, 60] });
             }
+
+            window.addEventListener('load', function() {
+              if (window.Android) {
+                window.Android.onMapReady();
+              }
+            });
           </script>
         </body>
         </html>
     """.trimIndent()
-    }
 
     var isPageLoaded by remember { mutableStateOf(false) }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
+    // Inject route points whenever they change
+    LaunchedEffect(routePoints, isPageLoaded) {
+        if (isPageLoaded && routePoints != null && routePoints.size >= 2) {
+            val webView = webViewRef ?: return@LaunchedEffect
+            val jsonArray = RouteRepository.latLngListToJsonArray(routePoints)
+            val escaped = jsonArray.replace("\"", "\\\"")
+            webView.post {
+                webView.evaluateJavascript("drawRoute(\"$escaped\")", null)
+            }
+        }
+    }
 
     AndroidView(
         modifier = modifier,
@@ -755,10 +866,10 @@ fun LeafletMapView(
                 settings.domStorageEnabled = true
                 settings.databaseEnabled = true
                 settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                
                 settings.allowUniversalAccessFromFileURLs = true
                 settings.allowFileAccessFromFileURLs = true
                 settings.allowFileAccess = true
+                setNetworkAvailable(true)
 
                 webChromeClient = android.webkit.WebChromeClient()
                 webViewClient = object : WebViewClient() {
@@ -766,17 +877,18 @@ fun LeafletMapView(
                         isPageLoaded = true
                     }
                 }
-                
+
                 addJavascriptInterface(object {
                     @android.webkit.JavascriptInterface
                     fun onMapReady() {
-                        post {
-                            isPageLoaded = true
-                        }
+                        post { isPageLoaded = true }
                     }
                 }, "Android")
 
-                loadDataWithBaseURL(null, htmlContent, "text/html", "UTF-8", null)
+                webViewRef = this
+
+                // KEY FIX: Use https://unpkg.com/ as base URL so CDN resources load
+                loadDataWithBaseURL("https://unpkg.com/", htmlContent, "text/html", "UTF-8", null)
             }
         },
         update = { webView ->
@@ -786,7 +898,10 @@ fun LeafletMapView(
                 val destLat = destinationLocation?.latitude ?: "null"
                 val destLng = destinationLocation?.longitude ?: "null"
                 val destTitle = destinationName.replace("\"", "\\\"")
-                webView.evaluateJavascript("updateLocations($userLat, $userLng, $destLat, $destLng, \"$destTitle\")", null)
+                webView.evaluateJavascript(
+                    "updateLocations($userLat, $userLng, $destLat, $destLng, \"$destTitle\")",
+                    null
+                )
             }
         }
     )

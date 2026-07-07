@@ -21,6 +21,7 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -37,6 +38,22 @@ android {
         excludes += "/META-INF/{AL2.0,LGPL2.1}"
       }
     }
+}
+
+tasks.register("renameApk") {
+    doLast {
+        val apkFile = file("build/outputs/apk/debug/app-debug.apk")
+        if (apkFile.exists()) {
+            val target = file("build/outputs/apk/debug/compass.apk")
+            if (target.exists()) target.delete()
+            apkFile.renameTo(target)
+            println("Renamed APK to compass.apk")
+        }
+    }
+}
+
+tasks.matching { it.name == "assembleDebug" }.configureEach {
+    finalizedBy("renameApk")
 }
 
 kotlin {
@@ -89,4 +106,10 @@ dependencies {
   // Google Maps SDK & Compose libraries
   implementation("com.google.maps.android:maps-compose:4.3.3")
   implementation("com.google.android.gms:play-services-maps:18.2.0")
+
+  // OkHttp for OSRM + Google Directions API routing calls
+  implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+  // Kotlinx Coroutines (for routing suspend functions)
+  implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 }
