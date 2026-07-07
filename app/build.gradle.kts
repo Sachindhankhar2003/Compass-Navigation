@@ -12,7 +12,10 @@ val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use { localProperties.load(it) }
 }
-val mapsApiKey = localProperties.getProperty("MAPS_API_KEY") ?: ""
+val mapsApiKey = (project.findProperty("MAPS_API_KEY") as? String)
+    ?: localProperties.getProperty("MAPS_API_KEY")
+    ?: ""
+
 
 android {
     namespace = "com.sachin.compassnav"
