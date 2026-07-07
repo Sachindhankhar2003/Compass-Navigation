@@ -852,8 +852,11 @@ fun LeafletMapView(
             val webView = webViewRef ?: return@LaunchedEffect
             val jsonArray = RouteRepository.latLngListToJsonArray(routePoints)
             val escaped = jsonArray.replace("\"", "\\\"")
+            android.util.Log.d("LeafletDebug", "Evaluating drawRoute with array: $escaped")
             webView.post {
-                webView.evaluateJavascript("drawRoute(\"$escaped\")", null)
+                webView.evaluateJavascript("drawRoute(\"$escaped\")") { result ->
+                    android.util.Log.d("LeafletDebug", "drawRoute execution result: $result")
+                }
             }
         }
     }
@@ -871,22 +874,48 @@ fun LeafletMapView(
                 settings.allowFileAccess = true
                 setNetworkAvailable(true)
 
-                webChromeClient = android.webkit.WebChromeClient()
-                webViewClient = object : WebViewClient() {
+                webChromeClient = object : android.webkit.WebChromeClient() {
+                    override fun onConsoleMessage(consoleMessage: android.webkit.ConsoleMessage?): Boolean {
+                        android.util.Log.d("LeafletDebug", "JS Console: [${consoleMessage?.messageLevel()}] ${consoleMessage?.message()} (at ${consoleMessage?.sourceId()}:${consoleMessage?.lineNumber()})")
+                        return super.onConsoleMessage(consoleMessage)
+                    }
+                }
+                webViewClient = object : android.webkit.WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
+                        android.util.Log.d("LeafletDebug", "onPageFinished: $url")
                         isPageLoaded = true
+                    }
+
+                    override fun onReceivedError(
+                        view: WebView?,
+                        request: android.webkit.WebResourceRequest?,
+                        error: android.webkit.WebResourceError?
+                    ) {
+                        android.util.Log.e("LeafletDebug", "Network Error for ${request?.url}: [${error?.errorCode}] ${error?.description}")
+                        super.onReceivedError(view, request, error)
+                    }
+
+                    override fun onReceivedHttpError(
+                        view: WebView?,
+                        request: android.webkit.WebResourceRequest?,
+                        errorResponse: android.webkit.WebResourceResponse?
+                    ) {
+                        android.util.Log.e("LeafletDebug", "HTTP Error for ${request?.url}: Status Code ${errorResponse?.statusCode}")
+                        super.onReceivedHttpError(view, request, errorResponse)
                     }
                 }
 
                 addJavascriptInterface(object {
                     @android.webkit.JavascriptInterface
                     fun onMapReady() {
+                        android.util.Log.d("LeafletDebug", "onMapReady called from JS interface")
                         post { isPageLoaded = true }
                     }
                 }, "Android")
 
                 webViewRef = this
 
+                android.util.Log.d("LeafletDebug", "Loading HTML into WebView:\n$htmlContent")
                 // KEY FIX: Use https://unpkg.com/ as base URL so CDN resources load
                 loadDataWithBaseURL("https://unpkg.com/", htmlContent, "text/html", "UTF-8", null)
             }
@@ -898,10 +927,13 @@ fun LeafletMapView(
                 val destLat = destinationLocation?.latitude ?: "null"
                 val destLng = destinationLocation?.longitude ?: "null"
                 val destTitle = destinationName.replace("\"", "\\\"")
-                webView.evaluateJavascript(
-                    "updateLocations($userLat, $userLng, $destLat, $destLng, \"$destTitle\")",
-                    null
-                )
+                val jsCall = "updateLocations($userLat, $userLng, $destLat, $destLng, \"$destTitle\")"
+                android.util.Log.d("LeafletDebug", "Evaluating: $jsCall")
+                webView.evaluateJavascript(jsCall) { result ->
+                    android.util.Log.d("LeafletDebug", "updateLocations execution result: $result")
+                }
+            } else {
+                android.util.Log.d("LeafletDebug", "update called but isPageLoaded is false")
             }
         }
     )
